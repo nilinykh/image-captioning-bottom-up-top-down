@@ -10,7 +10,7 @@ class CaptionDataset(Dataset):
     A PyTorch Dataset class to be used in a PyTorch DataLoader to create batches.
     """
 
-    def __init__(self, data_folder, data_name, split, transform=None):
+    def __init__(self, feat_folder, data_folder, data_name, split, transform=None):
         """
         :param data_folder: folder where data files are stored
         :param data_name: base name of processed datasets
@@ -21,9 +21,9 @@ class CaptionDataset(Dataset):
         assert self.split in {'TRAIN', 'VAL','TEST'}
 
         # Open hdf5 file where images are stored
-        self.train_hf = h5py.File(data_folder + '/train36.hdf5', 'r')
+        self.train_hf = h5py.File(feat_folder + '/train.hdf5', 'r')
         self.train_features = self.train_hf['image_features']
-        self.val_hf = h5py.File(data_folder + '/val36.hdf5', 'r')
+        self.val_hf = h5py.File(feat_folder + '/val.hdf5', 'r')
         self.val_features = self.val_hf['image_features']
 
         # Captions per image
@@ -48,22 +48,32 @@ class CaptionDataset(Dataset):
         self.dataset_size = len(self.captions)
 
     def __getitem__(self, i):
-        
+
+
         # The Nth caption corresponds to the (N // captions_per_image)th image
         objdet = self.objdet[i // self.cpi]
-        
+
         # Load bottom up image features
         if objdet[0] == "v":
             img = torch.FloatTensor(self.val_features[objdet[1]])
         else:
             img = torch.FloatTensor(self.train_features[objdet[1]])
 
+        # self.captions = encoded caption with the max length (padded)
+        # self.caplen = length of the actual captions (the non-padded part)
+
         caption = torch.LongTensor(self.captions[i])
 
-        caplen = torch.LongTensor([self.caplens[i]])
-        
+        #caplen = torch.LongTensor([self.caplens[i]])
+        #print(caption, len(caption))
+        #print(caplen)
+        sequence = torch.LongTensor(
+                self.captions[((i // self.cpi) * self.cpi):(((i // self.cpi) * self.cpi) + self.cpi)])
+        caplen = torch.LongTensor(
+                self.caplens[((i // self.cpi) * self.cpi):(((i // self.cpi) * self.cpi) + self.cpi)])
+
         if self.split is 'TRAIN':
-            return img, caption, caplen
+            return img, sequence, caplen
         else:
             # For validation of testing, also return all 'captions_per_image' captions to find BLEU-4 score
             all_captions = torch.LongTensor(

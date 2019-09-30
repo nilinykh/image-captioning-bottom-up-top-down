@@ -45,7 +45,7 @@ class DecoderWithAttention(nn.Module):
     Decoder.
     """
 
-    def __init__(self, attention_dim, embed_dim, decoder_dim, vocab_size, features_dim=2048, dropout=0.5):
+    def __init__(self, attention_dim, embed_dim, decoder_dim, vocab_size, features_dim=4096, dropout=0.5):
         """
         :param attention_dim: size of attention network
         :param embed_dim: embedding size
@@ -67,7 +67,11 @@ class DecoderWithAttention(nn.Module):
 
         self.embedding = nn.Embedding(vocab_size, embed_dim)  # embedding layer
         self.dropout = nn.Dropout(p=self.dropout)
+
+        #print('SIZE', embed_dim + features_dim + decoder_dim)
+
         self.top_down_attention = nn.LSTMCell(embed_dim + features_dim + decoder_dim, decoder_dim, bias=True) # top down attention LSTMCell
+
         self.language_model = nn.LSTMCell(features_dim + decoder_dim, decoder_dim, bias=True)  # language model LSTMCell
         self.fc1 = weight_norm(nn.Linear(decoder_dim, vocab_size))
         self.fc = weight_norm(nn.Linear(decoder_dim, vocab_size))  # linear layer to find scores over vocabulary
@@ -87,16 +91,16 @@ class DecoderWithAttention(nn.Module):
         :param encoder_out: encoded images, a tensor of dimension (batch_size, num_pixels, encoder_dim)
         :return: hidden state, cell state
         """
-        h = torch.zeros(batch_size,self.decoder_dim).to(device)  # (batch_size, decoder_dim)
-        c = torch.zeros(batch_size,self.decoder_dim).to(device)
+        h = torch.zeros(1, self.decoder_dim).to(device)  # (batch_size, decoder_dim)
+        c = torch.zeros(1, self.decoder_dim).to(device)
         return h, c
 
     def forward(self, image_features, encoded_captions, caption_lengths):
         """
         Forward propagation.
-        :param encoder_out: encoded images, a tensor of dimension (batch_size, enc_image_size, enc_image_size, encoder_dim)
-        :param encoded_captions: encoded captions, a tensor of dimension (batch_size, max_caption_length)
-        :param caption_lengths: caption lengths, a tensor of dimension (batch_size, 1)
+        :param encoder_out: encoded images, a tensor of dimension (batch_size, enc_image_size, enc_image_size, encoder_dim) 100 x 15 x 4096
+        :param encoded_captions: encoded captions, a tensor of dimension (batch_size, max_caption_length) 100 x 5 x 52
+        :param caption_lengths: caption lengths, a tensor of dimension (batch_size, 1) 100 x 5
         :return: scores for vocabulary, sorted encoded captions, decode lengths, weights, sort indices
         """
 
@@ -104,44 +108,62 @@ class DecoderWithAttention(nn.Module):
         vocab_size = self.vocab_size
 
         # Flatten image
-        image_features_mean = image_features.mean(1).to(device)  # (batch_size, num_pixels, encoder_dim)
+        image_features_mean = image_features.mean(1).to(device)  # (batch_size, num_pixels, encoder_dim) 100 x 4096
 
-        # Sort input data by decreasing lengths; why? apparent below
-        caption_lengths, sort_ind = caption_lengths.squeeze(1).sort(dim=0, descending=True)
-        image_features = image_features[sort_ind]
-        image_features_mean = image_features_mean[sort_ind]
-        encoded_captions = encoded_captions[sort_ind]
-
-        # Embedding
-        embeddings = self.embedding(encoded_captions)  # (batch_size, max_caption_length, embed_dim)
-
-        # Initialize LSTM state
-        h1, c1 = self.init_hidden_state(batch_size)  # (batch_size, decoder_dim)
-        h2, c2 = self.init_hidden_state(batch_size)  # (batch_size, decoder_dim)
-        
-        # We won't decode at the <end> position, since we've finished generating as soon as we generate <end>
-        # So, decoding lengths are actual lengths - 1
         decode_lengths = (caption_lengths - 1).tolist()
 
-        # Create tensors to hold word predicion scores
-        predictions = torch.zeros(batch_size, max(decode_lengths), vocab_size).to(device)
-        predictions1 = torch.zeros(batch_size, max(decode_lengths), vocab_size).to(device)
-        
-        # At each time-step, pass the language model's previous hidden state, the mean pooled bottom up features and
-        # word embeddings to the top down attention model. Then pass the hidden state of the top down model and the bottom up 
-        # features to the attention block. The attention weighed bottom up features and hidden state of the top down attention model
-        # are then passed to the language model 
-        for t in range(max(decode_lengths)):
-            batch_size_t = sum([l > t for l in decode_lengths])
-            h1,c1 = self.top_down_attention(
-                torch.cat([h2[:batch_size_t],image_features_mean[:batch_size_t],embeddings[:batch_size_t, t, :]], dim=1),(h1[:batch_size_t], c1[:batch_size_t]))
-            attention_weighted_encoding = self.attention(image_features[:batch_size_t],h1[:batch_size_t])
-            preds1 = self.fc1(self.dropout(h1))
-            h2,c2 = self.language_model(
-                torch.cat([attention_weighted_encoding[:batch_size_t],h1[:batch_size_t]], dim=1),
-                (h2[:batch_size_t], c2[:batch_size_t]))
-            preds = self.fc(self.dropout(h2))  # (batch_size_t, vocab_size)
-            predictions[:batch_size_t, t, :] = preds
-            predictions1[:batch_size_t, t, :] = preds1
+        #print('DECODE LENGTHS', decode_lengths)
 
-        return predictions, predictions1,encoded_captions, decode_lengths, sort_ind
+        # make sure that indexing here works properly!!!! right images are combined with right paragraphs!
+
+#        caption_lengths, sort_ind = caption_lengths.squeeze(1).sort(dim=0, descending=True)
+#        image_features = image_features[sort_ind]
+#        image_features_mean = image_features_mean[sort_ind]
+#        encoded_captions = encoded_captions[sort_ind]
+
+        predictions = torch.zeros(batch_size, 5, vocab_size).to(device)
+        predictions1 = torch.zeros(batch_size, 5, vocab_size).to(device)
+
+        for num, each_sample in enumerate(decode_lengths):
+
+            h1, c1 = self.init_hidden_state(batch_size)  # (batch_size, decoder_dim)
+            h2, c2 = self.init_hidden_state(batch_size)
+
+            this_image_features = image_features[num]
+            this_image_features_mean = image_features_mean[num].unsqueeze(0)
+            this_encoded_captions = encoded_captions[num]
+            embeddings = self.embedding(this_encoded_captions)
+
+            #print('F', this_image_features, this_image_features.shape)
+            #print('MEAN F', this_image_features_mean, this_image_features_mean.shape)
+            #print('THIS ENCODING', this_encoded_captions, this_encoded_captions.shape)
+            #print('THIS EMBEDDING', embeddings, embeddings.shape)
+            #print('SAMPLE', each_sample)
+
+            list_predictions = []
+
+            for t in range(5):
+
+                last_word_index = each_sample[t]
+                last_word_embedding = embeddings[t][last_word_index].unsqueeze(0)
+
+                h1,c1 = self.top_down_attention(
+                    torch.cat([h2, this_image_features_mean, last_word_embedding], dim=1),(h1, c1))
+                attention_weighted_encoding = self.attention(this_image_features, h1)
+                preds1 = self.fc1(self.dropout(h1))
+                h2,c2 = self.language_model(
+                    torch.cat([attention_weighted_encoding, h1], dim=1),
+                    (h2, c2))
+                preds = self.fc(self.dropout(h2))  # (batch_size_t, vocab_size)
+
+                list_predictions.append(preds)
+
+            paragraph_predictions = torch.cat(list_predictions, dim=0)
+            #print(paragraph_predictions, paragraph_predictions.shape)
+
+            predictions[num, :, :] = paragraph_predictions
+            predictions1[num, :, :] = paragraph_predictions
+
+        print(predictions[0:3], predictions.shape)
+
+        return predictions, predictions1, encoded_captions, decode_lengths

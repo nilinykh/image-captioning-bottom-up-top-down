@@ -11,8 +11,9 @@ from utils import *
 from nltk.translate.bleu_score import corpus_bleu
 
 # Data parameters
-data_folder = 'final_dataset'  # folder with data files saved by create_input_files.py
+data_folder = '/home/nikolai/049_matchit/generation/src/processing'  # folder with data files saved by create_input_files.py
 data_name = 'coco_5_cap_per_img_5_min_word_freq'  # base name shared by data files
+feat_folder = '/media/dsgshk/paragraph_nikolai/full' # folder with visual features only
 
 # Model parameters
 emb_dim = 1024  # dimension of word embeddings
@@ -24,9 +25,9 @@ cudnn.benchmark = True  # set to true only if inputs to model are fixed size; ot
 
 # Training parameters
 start_epoch = 0
-epochs = 50  # number of epochs to train for (if early stopping is not triggered)
+epochs = 1  # number of epochs to train for (if early stopping is not triggered)
 epochs_since_improvement = 0  # keeps track of number of epochs since there's been an improvement in validation BLEU
-batch_size = 100
+batch_size = 50
 workers = 1  # for data-loading; right now, only 1 works with h5py
 best_bleu4 = 0.  # BLEU-4 score right now
 print_freq = 100  # print training/validation stats every __ batches
@@ -62,7 +63,7 @@ def main():
         best_bleu4 = checkpoint['bleu-4']
         decoder = checkpoint['decoder']
         decoder_optimizer = checkpoint['decoder_optimizer']
-       
+
     # Move to GPU, if available
     decoder = decoder.to(device)
 
@@ -72,11 +73,18 @@ def main():
 
     # Custom dataloaders
     train_loader = torch.utils.data.DataLoader(
-        CaptionDataset(data_folder, data_name, 'TRAIN'),
+        CaptionDataset(feat_folder, data_folder, data_name, 'TRAIN'),
         batch_size=batch_size, shuffle=True, num_workers=workers, pin_memory=True)
     val_loader = torch.utils.data.DataLoader(
-        CaptionDataset(data_folder, data_name, 'VAL'),
+        CaptionDataset(feat_folder, data_folder, data_name, 'VAL'),
         batch_size=batch_size, shuffle=True, num_workers=workers, pin_memory=True)
+
+    list = [ x[1] for x in iter(train_loader).next() ]
+#    print(len(list))
+#    for i in list:
+#        print(i)
+#        print(i.shape)
+#        print()
 
     # Epochs
     for epoch in range(start_epoch, epochs):
@@ -144,8 +152,8 @@ def train(train_loader, decoder, criterion_ce, criterion_dis, decoder_optimizer,
         caplens = caplens.to(device)
 
         # Forward prop.
-        scores, scores_d,caps_sorted, decode_lengths, sort_ind = decoder(imgs, caps, caplens)
-        
+        scores, scores_d,caps_sorted, decode_lengths = decoder(imgs, caps, caplens)
+
         #Max-pooling across predicted words across time steps for discriminative supervision
         scores_d = scores_d.max(1)[0]
 
@@ -157,10 +165,13 @@ def train(train_loader, decoder, criterion_ce, criterion_dis, decoder_optimizer,
         for length in decode_lengths:
             targets_d[:,:length-1] = targets[:,:length-1]
 
+        #print(len(pack_padded_sequence(scores, decode_lengths, batch_first=True)))
+        #print(pack_padded_sequence(scores, decode_lengths, batch_first=True))
+
         # Remove timesteps that we didn't decode at, or are pads
         # pack_padded_sequence is an easy trick to do this
-        scores, _ = pack_padded_sequence(scores, decode_lengths, batch_first=True)
-        targets, _ = pack_padded_sequence(targets, decode_lengths, batch_first=True)
+        scores, _, _, _ = pack_padded_sequence(scores, decode_lengths, batch_first=True)
+        targets, _, _, _ = pack_padded_sequence(targets, decode_lengths, batch_first=True)
 
         # Calculate loss
         loss_d = criterion_dis(scores_d,targets_d.long())
@@ -226,7 +237,7 @@ def validate(val_loader, decoder, criterion_ce, criterion_dis):
             caps = caps.to(device)
             caplens = caplens.to(device)
 
-            scores, scores_d, caps_sorted, decode_lengths, sort_ind = decoder(imgs, caps, caplens)
+            scores, scores_d, caps_sorted, decode_lengths = decoder(imgs, caps, caplens)
             
             #Max-pooling across predicted words across time steps for discriminative supervision
             scores_d = scores_d.max(1)[0]
@@ -242,8 +253,8 @@ def validate(val_loader, decoder, criterion_ce, criterion_dis):
             # Remove timesteps that we didn't decode at, or are pads
             # pack_padded_sequence is an easy trick to do this
             scores_copy = scores.clone()
-            scores, _ = pack_padded_sequence(scores, decode_lengths, batch_first=True)
-            targets, _ = pack_padded_sequence(targets, decode_lengths, batch_first=True)
+            scores, _, _, _ = pack_padded_sequence(scores, decode_lengths, batch_first=True)
+            targets, _, _, _ = pack_padded_sequence(targets, decode_lengths, batch_first=True)
 
             # Calculate loss
             loss_d = criterion_dis(scores_d,targets_d.long())
@@ -270,7 +281,7 @@ def validate(val_loader, decoder, criterion_ce, criterion_dis):
             # references = [[ref1a, ref1b, ref1c], [ref2a, ref2b], ...], hypotheses = [hyp1, hyp2, ...]
 
             # References
-            allcaps = allcaps[sort_ind]  # because images were sorted in the decoder
+            #allcaps = allcaps[sort_ind]  # because images were sorted in the decoder
             for j in range(allcaps.shape[0]):
                 img_caps = allcaps[j].tolist()
                 img_captions = list(
