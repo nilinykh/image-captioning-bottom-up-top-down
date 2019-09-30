@@ -42,6 +42,7 @@ class Attention(nn.Module):
         :param features_dim: feature size of encoded images
         :param decoder_dim: size of decoder's RNN
         :param attention_dim: size of the attention network
+        :param topic_dim: size of the topic vector
         """
         super(Attention, self).__init__()
         self.features_att = weight_norm(nn.Linear(features_dim, attention_dim))  # linear layer to transform encoded image
@@ -63,7 +64,6 @@ class Attention(nn.Module):
         att1 = self.features_att(image_features)  # (batch_size, 15, attention_dim)
         att2 = self.decoder_att(decoder_hidden)  # (batch_size, attention_dim)
         att3 = self.topic_att(topic_feats)
-#        print('ATT3 shape', att3.shape)
         att = self.full_att(self.dropout(self.relu(att1 + att2 + att3.unsqueeze(1)))).squeeze(2)  # (batch_size, 15)
         alpha = self.softmax(att)  # (batch_size, 15)
         attention_weighted_encoding = (image_features * alpha.unsqueeze(2)).sum(dim=1)  # (batch_size, features_dim)
