@@ -5,6 +5,29 @@ from torch.nn.utils.weight_norm import weight_norm
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
+class AutoEncoder(nn.Module):
+    """
+    Convolutional Autoencoder network.
+    """
+
+    def __init__(self, features_dim, num_regions):
+        super(AutoEncoder, self).__init__()
+        self.linear_transform = nn.Linear(features_dim, 1024)
+        self.encoder = nn.Conv2D(1024, 5, kernel_size=(num_regions, 26), stride=2)
+        # decoder (deconvolution)
+        #self.decoder = Conv2DTranspose(1, (15, 26), strides=2, padding='valid')
+
+    def forward(self, x):
+        x = self.linear_transform(x)
+        x = x.unsqueeze(-1)
+        # x is fed to the autoencoder
+        x = self.encoder(x)
+        # no decoding is needed, we use 5 topics
+        #x = self.decoder(x)
+        return x
+
+
 class Attention(nn.Module):
     """
     Attention Network.
@@ -31,10 +54,10 @@ class Attention(nn.Module):
         :param decoder_hidden: previous decoder output, a tensor of dimension (batch_size, decoder_dim)
         :return: attention weighted encoding, weights
         """
-        att1 = self.features_att(image_features)  # (batch_size, 36, attention_dim)
+        att1 = self.features_att(image_features)  # (batch_size, 15, attention_dim)
         att2 = self.decoder_att(decoder_hidden)  # (batch_size, attention_dim)
-        att = self.full_att(self.dropout(self.relu(att1 + att2.unsqueeze(1)))).squeeze(2)  # (batch_size, 36)
-        alpha = self.softmax(att)  # (batch_size, 36)
+        att = self.full_att(self.dropout(self.relu(att1 + att2.unsqueeze(1)))).squeeze(2)  # (batch_size, 15)
+        alpha = self.softmax(att)  # (batch_size, 15)
         attention_weighted_encoding = (image_features * alpha.unsqueeze(2)).sum(dim=1)  # (batch_size, features_dim)
 
         return attention_weighted_encoding
@@ -45,13 +68,14 @@ class DecoderWithAttention(nn.Module):
     Decoder.
     """
 
-    def __init__(self, attention_dim, embed_dim, decoder_dim, vocab_size, features_dim=4096, dropout=0.5):
+    def __init__(self, attention_dim, embed_dim, decoder_dim, vocab_size, features_dim=4096, dropout=0.5, num_regions=15):
         """
         :param attention_dim: size of attention network
         :param embed_dim: embedding size
         :param decoder_dim: size of decoder's RNN
         :param vocab_size: size of vocabulary
         :param features_dim: feature size of encoded images
+        :param num_regions: number of regions used to encode images
         :param dropout: dropout
         """
         super(DecoderWithAttention, self).__init__()
@@ -62,8 +86,11 @@ class DecoderWithAttention(nn.Module):
         self.decoder_dim = decoder_dim
         self.vocab_size = vocab_size
         self.dropout = dropout
+        self.num_regions = num_regions
 
+        self.autoencoder = AutoEncoder(features_dim, num_regions)
         self.attention = Attention(features_dim, decoder_dim, attention_dim)  # attention network
+
 
         self.embedding = nn.Embedding(vocab_size, embed_dim)  # embedding layer
         self.dropout = nn.Dropout(p=self.dropout)
@@ -140,7 +167,15 @@ class DecoderWithAttention(nn.Module):
             #print('THIS EMBEDDING', embeddings, embeddings.shape)
             #print('SAMPLE', each_sample)
 
+            topics = self.autoencoder(this_image_features.shape[1], 15)
+
+            print('TOPICS', topics)
+            print('TOPICS SHAPE', topics.shape)
+
+            break
+
             list_predictions = []
+            list_predictions1 = []
 
             for t in range(5):
 
@@ -149,20 +184,25 @@ class DecoderWithAttention(nn.Module):
 
                 h1,c1 = self.top_down_attention(
                     torch.cat([h2, this_image_features_mean, last_word_embedding], dim=1),(h1, c1))
+
                 attention_weighted_encoding = self.attention(this_image_features, h1)
+
                 preds1 = self.fc1(self.dropout(h1))
+
                 h2,c2 = self.language_model(
                     torch.cat([attention_weighted_encoding, h1], dim=1),
                     (h2, c2))
                 preds = self.fc(self.dropout(h2))  # (batch_size_t, vocab_size)
 
                 list_predictions.append(preds)
+                list_predictions1.append(preds1)
 
             paragraph_predictions = torch.cat(list_predictions, dim=0)
+            paragraph_predictions1 = torch.cat(list_predictions1, dim=0)
             #print(paragraph_predictions, paragraph_predictions.shape)
 
             predictions[num, :, :] = paragraph_predictions
-            predictions1[num, :, :] = paragraph_predictions
+            predictions1[num, :, :] = paragraph_predictions1
 
         print(predictions[0:3], predictions.shape)
 
