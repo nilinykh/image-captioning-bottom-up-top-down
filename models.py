@@ -107,7 +107,7 @@ class DecoderWithAttention(nn.Module):
 
         self.top_down_attention = nn.LSTMCell(embed_dim + features_dim + decoder_dim, decoder_dim, bias=True) # top down attention LSTMCell
 
-        self.language_model = nn.LSTMCell(features_dim + decoder_dim, decoder_dim, bias=True)  # language model LSTMCell
+        self.language_model = nn.LSTMCell(features_dim + decoder_dim + topic_dim, decoder_dim, bias=True)  # language model LSTMCell
         self.fc1 = weight_norm(nn.Linear(decoder_dim, vocab_size))
         self.fc = weight_norm(nn.Linear(decoder_dim, vocab_size))  # linear layer to find scores over vocabulary
         self.init_weights()  # initialize some layers with the uniform distribution
@@ -193,15 +193,12 @@ class DecoderWithAttention(nn.Module):
                 h1,c1 = self.top_down_attention(
                     torch.cat([h2, this_image_features_mean, last_word_embedding], dim=1),(h1, c1))
 
-                attention_weighted_encoding = self.attention(this_image_features, h1, this_topic)
-                print('ATT WEIGHTED ENCODING', attention_weighted_encoding)
-
-                #break
+                attention_weighted_encoding = self.attention(this_image_features, h1, this_topic) # 1 x 4096
 
                 preds1 = self.fc1(self.dropout(h1))
 
                 h2,c2 = self.language_model(
-                    torch.cat([attention_weighted_encoding, h1], dim=1),
+                    torch.cat([attention_weighted_encoding, this_topic, h1], dim=1),
                     (h2, c2))
                 preds = self.fc(self.dropout(h2))  # (batch_size_t, vocab_size)
 
@@ -215,6 +212,6 @@ class DecoderWithAttention(nn.Module):
             predictions[num, :, :] = paragraph_predictions
             predictions1[num, :, :] = paragraph_predictions1
 
-        print(predictions[0:3], predictions.shape)
+        print('final predictions', predictions[0:3], predictions.shape)
 
         return predictions, predictions1, encoded_captions, decode_lengths
