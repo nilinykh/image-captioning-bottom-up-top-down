@@ -69,7 +69,7 @@ def main():
 
     # Loss functions
     criterion_ce = nn.CrossEntropyLoss().to(device)
-    criterion_dis = nn.MultiLabelMarginLoss().to(device)
+#    criterion_dis = nn.MultiLabelMarginLoss().to(device)
 
     # Custom dataloaders
     train_loader = torch.utils.data.DataLoader(
@@ -79,7 +79,7 @@ def main():
         CaptionDataset(feat_folder, data_folder, data_name, 'VAL'),
         batch_size=batch_size, shuffle=True, num_workers=workers, pin_memory=True)
 
-    list = [ x[1] for x in iter(train_loader).next() ]
+#    list = [ x[1] for x in iter(train_loader).next() ]
 #    print(len(list))
 #    for i in list:
 #        print(i)
@@ -99,15 +99,15 @@ def main():
         train(train_loader=train_loader,
               decoder=decoder,
               criterion_ce = criterion_ce,
-              criterion_dis=criterion_dis,
+ #             criterion_dis=criterion_dis,
               decoder_optimizer=decoder_optimizer,
               epoch=epoch)
 
         # One epoch's validation
         recent_bleu4 = validate(val_loader=val_loader,
                                 decoder=decoder,
-                                criterion_ce=criterion_ce,
-                                criterion_dis=criterion_dis)
+                                criterion_ce=criterion_ce)
+#                                criterion_dis=criterion_dis)
 
         # Check if there was an improvement
         is_best = recent_bleu4 > best_bleu4
@@ -122,7 +122,7 @@ def main():
         save_checkpoint(data_name, epoch, epochs_since_improvement, decoder,decoder_optimizer, recent_bleu4, is_best)
 
 
-def train(train_loader, decoder, criterion_ce, criterion_dis, decoder_optimizer, epoch):
+def train(train_loader, decoder, criterion_ce, decoder_optimizer, epoch):
     """
     Performs one epoch's training.
     :param train_loader: DataLoader for training data
@@ -152,21 +152,34 @@ def train(train_loader, decoder, criterion_ce, criterion_dis, decoder_optimizer,
         caplens = caplens.to(device)
 
         # Forward prop.
-        scores, scores_d,caps_sorted, decode_lengths = decoder(imgs, caps, caplens)
+        scores, caps_sorted, decode_lengths = decoder(imgs, caps, caplens)
+
+        print('SCORES', scores, scores.shape)
+#        print('SCORES D', scores_d, scores_d.shape)
+        print('CAPS SORTED', caps_sorted, caps_sorted.shape)
+#        print('DECODE LENGTHS', decode_lengths, len(decode_lengths))
+#        break
 
         #Max-pooling across predicted words across time steps for discriminative supervision
-        scores_d = scores_d.max(1)[0]
+        #scores_d = scores_d.max(1)[0]
+        #print('scores_d', scores_d, scores_d.shape)
 
         # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
-        targets = caps_sorted[:, 1:]
-        targets_d = torch.zeros(scores_d.size(0),scores_d.size(1)).to(device)
-        targets_d.fill_(-1)
+        targets = caps_sorted[:, :, 1:]
+        print('targets', targets.shape, targets)
+        #targets_d = torch.zeros(scores_d.size(0),scores_d.size(1)).to(device)
+        #print('targets_d', targets_d.shape)
+        #targets_d.fill_(-1)
 
-        for length in decode_lengths:
-            targets_d[:,:length-1] = targets[:,:length-1]
+        #for single_sample_length in decode_lengths:
+        #    for length in single_sample_length:
+        #        targets_d[:,:length-1] = targets[:,:length-1]
 
         #print(len(pack_padded_sequence(scores, decode_lengths, batch_first=True)))
         #print(pack_padded_sequence(scores, decode_lengths, batch_first=True))
+
+
+        # how to do it on the decode_lengths here??? these are not simple captions, but 5 captions in a paragraph, gotta pad each of them somehow?
 
         # Remove timesteps that we didn't decode at, or are pads
         # pack_padded_sequence is an easy trick to do this
@@ -174,14 +187,15 @@ def train(train_loader, decoder, criterion_ce, criterion_dis, decoder_optimizer,
         targets, _, _, _ = pack_padded_sequence(targets, decode_lengths, batch_first=True)
 
         # Calculate loss
-        loss_d = criterion_dis(scores_d,targets_d.long())
+        #loss_d = criterion_dis(scores_d,targets_d.long())
         loss_g = criterion_ce(scores, targets)
-        loss = loss_g + (10 * loss_d)
-        
+        #loss = loss_g + (10 * loss_d)
+        loss = loss_g
+
         # Back prop.
         decoder_optimizer.zero_grad()
         loss.backward()
-	
+
         # Clip gradients when they are getting too large
         torch.nn.utils.clip_grad_norm_(filter(lambda p: p.requires_grad, decoder.parameters()), 0.25)
 
@@ -208,7 +222,7 @@ def train(train_loader, decoder, criterion_ce, criterion_dis, decoder_optimizer,
                                                                           top5=top5accs))
 
 
-def validate(val_loader, decoder, criterion_ce, criterion_dis):
+def validate(val_loader, decoder, criterion_ce):
     """
     Performs one epoch's validation.
     :param val_loader: DataLoader for validation data.
@@ -229,26 +243,26 @@ def validate(val_loader, decoder, criterion_ce, criterion_dis):
     hypotheses = list()  # hypotheses (predictions)
 
     # Batches
-    with torch.no_grad(): 
-        for i, (imgs, caps, caplens,allcaps) in enumerate(val_loader):
+    #with torch.no_grad():
+    for i, (imgs, caps, caplens,allcaps) in enumerate(val_loader):
 
             # Move to device, if available
             imgs = imgs.to(device)
             caps = caps.to(device)
             caplens = caplens.to(device)
 
-            scores, scores_d, caps_sorted, decode_lengths = decoder(imgs, caps, caplens)
+            scores, caps_sorted, decode_lengths = decoder(imgs, caps, caplens)
             
             #Max-pooling across predicted words across time steps for discriminative supervision
-            scores_d = scores_d.max(1)[0]
+            #scores_d = scores_d.max(1)[0]
 
             # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
             targets = caps_sorted[:, 1:]
-            targets_d = torch.zeros(scores_d.size(0),scores_d.size(1)).to(device)
-            targets_d.fill_(-1)
+            #targets_d = torch.zeros(scores_d.size(0),scores_d.size(1)).to(device)
+            #targets_d.fill_(-1)
 
-            for length in decode_lengths:
-                targets_d[:,:length-1] = targets[:,:length-1]
+            #for length in decode_lengths:
+            #    targets_d[:,:length-1] = targets[:,:length-1]
 
             # Remove timesteps that we didn't decode at, or are pads
             # pack_padded_sequence is an easy trick to do this
@@ -257,9 +271,10 @@ def validate(val_loader, decoder, criterion_ce, criterion_dis):
             targets, _, _, _ = pack_padded_sequence(targets, decode_lengths, batch_first=True)
 
             # Calculate loss
-            loss_d = criterion_dis(scores_d,targets_d.long())
+            #loss_d = criterion_dis(scores_d,targets_d.long())
             loss_g = criterion_ce(scores, targets)
-            loss = loss_g + (10 * loss_d)
+            #loss = loss_g + (10 * loss_d)
+            loss = loss_g
 
             # Keep track of metrics
             losses.update(loss.item(), sum(decode_lengths))

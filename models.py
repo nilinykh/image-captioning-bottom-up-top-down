@@ -167,7 +167,11 @@ class DecoderWithAttention(nn.Module):
             this_image_features = image_features[num]
             this_image_features_mean = image_features_mean[num].unsqueeze(0)
             this_encoded_captions = encoded_captions[num]
-            embeddings = self.embedding(this_encoded_captions)
+            embeddings = self.embedding(this_encoded_captions) # 5 x 52 x 1024
+
+
+#            print('EMBEDDINGS', embeddings)
+#            print('SHAPE EMBEDDINGS', embeddings.shape)
 
             #print('F', this_image_features, this_image_features.shape)
             #print('MEAN F', this_image_features_mean, this_image_features_mean.shape)
@@ -187,8 +191,20 @@ class DecoderWithAttention(nn.Module):
 
                 this_topic = topics[t]
 
+#                print('THIS SENTENCE EMBEDDING?', embeddings[t].shape)
+
                 last_word_index = each_sample[t]
-                last_word_embedding = embeddings[t][last_word_index].unsqueeze(0)
+#                print('each sample', each_sample)
+#                print('last word index', last_word_index)
+#                print('sentence embedding', embeddings[t])
+#                for num, i in enumerate(embeddings[t]):
+#                    print('i', i, num, i.shape)
+#                print('word embedding', embeddings[t][last_word_index])
+                last_word_embedding = embeddings[t][last_word_index - 1].unsqueeze(0)
+
+#                print('H2 SHAPE', h2.shape)
+#                print('MEAN IMAGE SHAPE', this_image_features_mean.shape)
+#                print('LAST WORD EMBEDDING SHAPE', last_word_embedding.shape)
 
                 h1,c1 = self.top_down_attention(
                     torch.cat([h2, this_image_features_mean, last_word_embedding], dim=1),(h1, c1))
@@ -214,4 +230,4 @@ class DecoderWithAttention(nn.Module):
 
         print('final predictions', predictions[0:3], predictions.shape)
 
-        return predictions, predictions1, encoded_captions, decode_lengths
+        return predictions, encoded_captions, decode_lengths
